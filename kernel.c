@@ -11,7 +11,7 @@ struct process procs[PROCS_MAX];
 struct process *current_proc;
 struct process *idle_proc;
 
-paddr_t alloc_pages(uint32_t n) {
+paddr_t alloc_pages(uint32_t n) {  // 从可用内存起始位置 _free_ram 分配连续 n 个物理页。
     static paddr_t next_paddr = (paddr_t) __free_ram;
     paddr_t paddr = next_paddr;
     next_paddr += n * PAGE_SIZE;
@@ -23,22 +23,29 @@ paddr_t alloc_pages(uint32_t n) {
     return paddr;
 }
 
+/*
+ * map_page: 用于在页表中映射虚拟地址到物理地址。
+ * table1 指向一级页表的指针
+ * vaddr 要映射的虚拟地址
+ * paddr 对应的物理地址
+ * flags 读写权限标志
+ */
 void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags) {
-    if (!is_aligned(vaddr, PAGE_SIZE))
+    if (!is_aligned(vaddr, PAGE_SIZE))   // 检查虚拟地址是否对齐
         PANIC("unaligned vaddr %x", vaddr);
 
-    if (!is_aligned(paddr, PAGE_SIZE))
+    if (!is_aligned(paddr, PAGE_SIZE))   // 检查物理地址是否对齐
         PANIC("unaligned paddr %x", paddr);
 
-    uint32_t vpn1 = (vaddr >> 22) & 0x3ff;
-    if ((table1[vpn1] & PAGE_V) == 0) {
-        uint32_t pt_paddr = alloc_pages(1);
-        table1[vpn1] = ((pt_paddr / PAGE_SIZE) << 10) | PAGE_V;
+    uint32_t vpn1 = (vaddr >> 22) & 0x3ff;  // 从虚拟地址高位得到 VPN1（一级虚拟页号）
+    if ((table1[vpn1] & PAGE_V) == 0) {     // 检查一级页表中能否找到有效的二级页表
+        uint32_t pt_paddr = alloc_pages(1); // 找不到，那么分配一页作为二级页表。
+        table1[vpn1] = ((pt_paddr / PAGE_SIZE) << 10) | PAGE_V; // 更新一级页表 VPN1，记录二级页表的地址
     }
 
-    uint32_t vpn0 = (vaddr >> 12) & 0x3ff;
-    uint32_t *table0 = (uint32_t *) ((table1[vpn1] >> 10) * PAGE_SIZE);
-    table0[vpn0] = ((paddr / PAGE_SIZE) << 10) | flags | PAGE_V;
+    uint32_t vpn0 = (vaddr >> 12) & 0x3ff;  // 从虚拟地址找到 VPN0（二级虚拟页号）
+    uint32_t *table0 = (uint32_t *) ((table1[vpn1] >> 10) * PAGE_SIZE); // 从一级页表中得到二级页表的地址
+    table0[vpn0] = ((paddr / PAGE_SIZE) << 10) | flags | PAGE_V;        // 将物理地址赋值给二级页表的虚拟页号。
 }
 
 struct sbiret sbi_call(long arg0, long arg1, long arg2, long arg3, long arg4,
@@ -249,7 +256,7 @@ void fs_init(void) {
     }
 }
 
-struct file *fs_lookup(const char *filename) {
+struct file *fs_lookup(const char *filename) { // 在文件系统中查找文件
     for (int i = 0; i < FILES_MAX; i++) {
         struct file *file = &files[i];
         if (!strcmp(file->name, filename))
@@ -269,12 +276,12 @@ long getchar(void) {
 }
 
 __attribute__((naked))
-__attribute__((aligned(4)))
-void kernel_entry(void) {
+__attribute__((aligned(4)))  // 该函数4字节对齐
+void kernel_entry(void) {    // 函数功能：在内核栈中保存寄存器状态，然后执行 handle_trap 进行异常处理，最后将寄存器恢复，然后将控制权返回用户态，继续执行用户程序。
     __asm__ __volatile__(
-        "csrrw sp, sscratch, sp\n"
-        "addi sp, sp, -4 * 31\n"
-        "sw ra,  4 * 0(sp)\n"
+        "csrrw sp, sscratch, sp\n"  // 这的 sp 存放用户态栈，sscratch 存放内核态栈。这句代码是 sp 和 sscratch 值互换。将用户态 sp 放在 sscratch，以便恢复到用户态时使用。
+        "addi sp, sp, -4 * 31\n"    // 这里 sp 已经是是内核态栈了，这里是向下移动出31个寄存器的状态空间。（上一句代码中 sp 值 变成了 sscratch 寄存器中原来存着的内核态 sp）。
+        "sw ra,  4 * 0(sp)\n"       // 依次在内核 sp 中保存寄存器状态。
         "sw gp,  4 * 1(sp)\n"
         "sw tp,  4 * 2(sp)\n"
         "sw t0,  4 * 3(sp)\n"
@@ -305,16 +312,16 @@ void kernel_entry(void) {
         "sw s10, 4 * 28(sp)\n"
         "sw s11, 4 * 29(sp)\n"
 
-        "csrr a0, sscratch\n"
-        "sw a0,  4 * 30(sp)\n"
+        "csrr a0, sscratch\n" 
+        "sw a0,  4 * 30(sp)\n"    // 将用户态栈 sp 也放到内核态 sp 中
 
-        "addi a0, sp, 4 * 31\n"
-        "csrw sscratch, a0\n"
+        "addi a0, sp, 4 * 31\n"   // a0 寄存器现在存的是内核态 sp 栈顶位置。
+        "csrw sscratch, a0\n"     // ssctatch 现在是内核态 sp 栈顶，内核态栈的第 31 个位置存的是 用户态sp栈顶。
 
-        "mv a0, sp\n"
-        "call handle_trap\n"
+        "mv a0, sp\n"             // sp 现在又是内核态 sp 了
+        "call handle_trap\n"      // 调用处理函数 handle_trap
 
-        "lw ra,  4 * 0(sp)\n"
+        "lw ra,  4 * 0(sp)\n"     // 恢复上下文
         "lw gp,  4 * 1(sp)\n"
         "lw tp,  4 * 2(sp)\n"
         "lw t0,  4 * 3(sp)\n"
@@ -344,27 +351,33 @@ void kernel_entry(void) {
         "lw s9,  4 * 27(sp)\n"
         "lw s10, 4 * 28(sp)\n"
         "lw s11, 4 * 29(sp)\n"
-        "lw sp,  4 * 30(sp)\n"
-        "sret\n"
+        "lw sp,  4 * 30(sp)\n"      // 4 *30（sp）是存放用户态栈顶的位置，这里sp又变成了用户态栈顶了，下一步就可以切回用户态了。
+        "sret\n"                    // 返回用户模式
     );
 }
 
-__attribute__((naked)) void user_entry(void) {
+__attribute__((naked)) void user_entry(void) { // 实现内核态到用户态的切换。
     __asm__ __volatile__(
-        "csrw sepc, %[sepc]\n"
-        "csrw sstatus, %[sstatus]\n"
-        "sret\n"
+        "csrw sepc, %[sepc]\n"        // sepc 保存发生异常时的程序计数器值，用于异常后恢复到用户态执行。
+        "csrw sstatus, %[sstatus]\n"  // 设置状态寄存器的标志，控制终端和用户态的访问权限。
+        "sret\n"                      // 从超级模式返回到用户模式。根据 sstatus 的设置恢复到用户态，跳转到 sepc 的位置。
         :
         : [sepc] "r" (USER_BASE),
           [sstatus] "r" (SSTATUS_SPIE | SSTATUS_SUM)
     );
 }
 
-__attribute__((naked)) void switch_context(uint32_t *prev_sp,
-                                           uint32_t *next_sp) {
+/*
+ * switch_context：为进程切换做准备
+ * 将寄存器状态保存在 prev_sp（即将结束的进程的栈中）
+ * 将 next_sp（接下来运行的进程的栈）中保存的寄存器状态放到寄存器里面，以便接下来切换到下一个进程。 
+ */
+
+__attribute__((naked)) void switch_context(uint32_t *prev_sp,    // 多任务上下文切换
+                                           uint32_t *next_sp) {  // 参数是前后两个任务的栈指针
     __asm__ __volatile__(
-        "addi sp, sp, -13 * 4\n"
-        "sw ra,  0  * 4(sp)\n"
+        "addi sp, sp, -13 * 4\n"  // 在当前栈中分配空间，以存放寄存器状态。
+        "sw ra,  0  * 4(sp)\n"    // 将当前寄存器状态存放在 sp 中保存，以便下一次切换回该任务时恢复寄存器。
         "sw s0,  1  * 4(sp)\n"
         "sw s1,  2  * 4(sp)\n"
         "sw s2,  3  * 4(sp)\n"
@@ -377,9 +390,9 @@ __attribute__((naked)) void switch_context(uint32_t *prev_sp,
         "sw s9,  10 * 4(sp)\n"
         "sw s10, 11 * 4(sp)\n"
         "sw s11, 12 * 4(sp)\n"
-        "sw sp, (a0)\n"
-        "lw sp, (a1)\n"
-        "lw ra,  0  * 4(sp)\n"
+        "sw sp, (a0)\n"           // a0 指的是 prev_sp，将当前存放了寄存器状态的 sp 地址保存在 prev_sp 中
+        "lw sp, (a1)\n"           // sp 被 next_sp 赋值，sp 是下一个任务的栈指针了。
+        "lw ra,  0  * 4(sp)\n"    // 将下一个任务的寄存器状态恢复到 sp 中
         "lw s0,  1  * 4(sp)\n"
         "lw s1,  2  * 4(sp)\n"
         "lw s2,  3  * 4(sp)\n"
@@ -392,15 +405,23 @@ __attribute__((naked)) void switch_context(uint32_t *prev_sp,
         "lw s9,  10 * 4(sp)\n"
         "lw s10, 11 * 4(sp)\n"
         "lw s11, 12 * 4(sp)\n"
-        "addi sp, sp, 13 * 4\n"
-        "ret\n"
+        "addi sp, sp, 13 * 4\n"  // 回到 next_sp 栈顶位置 
+        "ret\n"                  // 返回指令，结束，控制权交给下一个任务
     );
 }
 
-struct process *create_process(const void *image, size_t image_size) {
+/*
+ * create_process: 创建新进程。 
+ * 查找空闲的进程槽
+ * 初始化进程栈和寄存器状态
+ * 分配、设置进程的页表（分别建立内核程序、虚拟块设备、用户程序物理页面与虚拟页面的映射）
+ * 设置进程的 id 和状态。
+ */
+
+struct process *create_process(const void *image, size_t image_size) { // 参数：image 是可执行代码的指针，image_size 代码的大小
     struct process *proc = NULL;
     int i;
-    for (i = 0; i < PROCS_MAX; i++) {
+    for (i = 0; i < PROCS_MAX; i++) {  // 从进程组里面找一个空闲的进程
         if (procs[i].state == PROC_UNUSED) {
             proc = &procs[i];
             break;
@@ -408,10 +429,10 @@ struct process *create_process(const void *image, size_t image_size) {
     }
 
     if (!proc)
-        PANIC("no free process slots");
+        PANIC("no free process slots");  // 如果没有空闲进程，则调用 PANIC
 
-    uint32_t *sp = (uint32_t *) &proc->stack[sizeof(proc->stack)];
-    *--sp = 0;                      // s11
+    uint32_t *sp = (uint32_t *) &proc->stack[sizeof(proc->stack)]; // sp 初始化为进程栈的栈顶
+    *--sp = 0;                      // s11  依次设置的栈中的寄存器值
     *--sp = 0;                      // s10
     *--sp = 0;                      // s9
     *--sp = 0;                      // s8
@@ -423,19 +444,19 @@ struct process *create_process(const void *image, size_t image_size) {
     *--sp = 0;                      // s2
     *--sp = 0;                      // s1
     *--sp = 0;                      // s0
-    *--sp = (uint32_t) user_entry;  // ra
+    *--sp = (uint32_t) user_entry;  // ra （返回地址寄存器），ra 设置为user_entry，表示进程开始执行的入口点。user_entry 是内核态切换为用户态的入口处。
 
-    uint32_t *page_table = (uint32_t *) alloc_pages(1);
+    uint32_t *page_table = (uint32_t *) alloc_pages(1);  // 分配一个页表，用来管理进程的虚拟地址空间映射（虚拟地址空间是连续的，与物理内存空间有映射关系，虚拟地址空间便于进程的安全性、隔离性、灵活性）
 
-    // Kernel pages.
+    // Kernel pages. 建立虚拟页面与内核态物理内存页面之间的映射（内核态没有用到虚拟页面）
     for (paddr_t paddr = (paddr_t) __kernel_base;
          paddr < (paddr_t) __free_ram_end; paddr += PAGE_SIZE)
         map_page(page_table, paddr, paddr, PAGE_R | PAGE_W | PAGE_X);
 
-    // virtio-blk
+    // virtio-blk  虚拟块设备的映射
     map_page(page_table, VIRTIO_BLK_PADDR, VIRTIO_BLK_PADDR, PAGE_R | PAGE_W);
 
-    // User pages.
+    // User pages. 为用户程序分配物理页面并存放，然后进行虚拟页面地址映射。
     for (uint32_t off = 0; off < image_size; off += PAGE_SIZE) {
         paddr_t page = alloc_pages(1);
         size_t remaining = image_size - off;
@@ -452,9 +473,15 @@ struct process *create_process(const void *image, size_t image_size) {
     return proc;
 }
 
+/*
+ * yield 实现进程调度。
+ * 寻找下一个可运行的进程
+ * 更新页表、栈指针
+ * 切换上下文（切换寄存器状态）
+ */
 void yield(void) {
     struct process *next = idle_proc;
-    for (int i = 0; i < PROCS_MAX; i++) {
+    for (int i = 0; i < PROCS_MAX; i++) {  // 遍历进程组，找到下一个正在等待运行的进程。
         struct process *proc = &procs[(current_proc->pid + i) % PROCS_MAX];
         if (proc->state == PROC_RUNNABLE && proc->pid > 0) {
             next = proc;
@@ -468,21 +495,27 @@ void yield(void) {
     struct process *prev = current_proc;
     current_proc = next;
 
-    __asm__ __volatile__(
-        "sfence.vma\n"
-        "csrw satp, %[satp]\n"
-        "sfence.vma\n"
-        "csrw sscratch, %[sscratch]\n"
+    __asm__ __volatile__(                // 内联汇编更新页表和栈指针
+        "sfence.vma\n"                   // 确保更新虚拟地址空间
+        "csrw satp, %[satp]\n"           // 设置新的页表寄存器
+        "sfence.vma\n"                   // 确保更新虚拟地址空间
+        "csrw sscratch, %[sscratch]\n"   // 设置新的临时寄存器，指向下一个进程的栈
         :
         : [satp] "r" (SATP_SV32 | ((uint32_t) next->page_table / PAGE_SIZE)),
           [sscratch] "r" ((uint32_t) &next->stack[sizeof(next->stack)])
     );
 
-    switch_context(&prev->sp, &next->sp);
+    switch_context(&prev->sp, &next->sp);  // 寄存器状态保存和切花，为进程切换做准备。
 }
 
-void handle_syscall(struct trap_frame *f) {
-    switch (f->a3) {
+/*
+ * handle_syscall: 系统调用处理函数，用于处理用户程序发的系统调用请求。
+ * 根据不同的类型，处理不同的系统调用
+ * trap_frame 与用户程序进行参数传递、状态更新
+*/
+
+void handle_syscall(struct trap_frame *f) {   // 入参：保存了系统调用的参数和上下文信息（上下文信息其实就是寄存器状态）
+    switch (f->a3) {         // 根据系统调用类型进行分支处理
         case SYS_PUTCHAR:
             putchar(f->a0);
             break;
@@ -494,7 +527,7 @@ void handle_syscall(struct trap_frame *f) {
                     break;
                 }
 
-                yield();
+                yield();  // 进程切换
             }
             break;
         case SYS_EXIT:
@@ -533,44 +566,48 @@ void handle_syscall(struct trap_frame *f) {
     }
 }
 
-void handle_trap(struct trap_frame *f) {
-    uint32_t scause = READ_CSR(scause);
-    uint32_t stval = READ_CSR(stval);
-    uint32_t user_pc = READ_CSR(sepc);
-    if (scause == SCAUSE_ECALL) {
+/*
+ * handle_trap：处理来自于用户程序的异常，或者是系统调用
+ *
+ */
+void handle_trap(struct trap_frame *f) {  // 入参是异常发生时的内存上下文
+    uint32_t scause = READ_CSR(scause);   // 从控制和状态寄存器 scause 中获取走到这个函数的原因。
+    uint32_t stval = READ_CSR(stval);     // 获取异常时的无效地址或者其他相关值。
+    uint32_t user_pc = READ_CSR(sepc);    // 获取异常时的程序计数器。
+    if (scause == SCAUSE_ECALL) {         // 如果是系统调用，那么处理系统调用，并且程序计数器往下走。以便系统调用处理完，程序继续往下走
         handle_syscall(f);
         user_pc += 4;
-    } else {
+    } else {                              // 否则，调用 PNANIC 打印错误信息并终止程序。
         PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval, user_pc);
     }
 
-    WRITE_CSR(sepc, user_pc);
+    WRITE_CSR(sepc, user_pc);            // 更新程序计数器，以便异常处理完，继续执行
 }
 
 void kernel_main(void) {
-    memset(__bss, 0, (size_t) __bss_end - (size_t) __bss);
+    memset(__bss, 0, (size_t) __bss_end - (size_t) __bss); // _bss是未初始化数据，将其清零（包括未初始化的全局变量、静态全局变量、静态局部变量）
     printf("\n\n");
-    WRITE_CSR(stvec, (uint32_t) kernel_entry);
-    virtio_blk_init();
-    fs_init();
+    WRITE_CSR(stvec, (uint32_t) kernel_entry);             // stvec是中断寄存器，将kernel_entry的地址写入stvec，确保当中断发生时，kernel_entry响应和处理这些中断。
+    virtio_blk_init();                                     // 初始化 Virtio 块设备驱动，通常用于管理虚拟磁盘或块设备的操作
+    fs_init();                                             // 初始化文件系统
 
-    idle_proc = create_process(NULL, 0);
+    idle_proc = create_process(NULL, 0);                   // 创建一个空闲进程
     idle_proc->pid = -1; // idle
     current_proc = idle_proc;
 
-    create_process(_binary_shell_bin_start, (size_t) _binary_shell_bin_size);
-    yield();
+    create_process(_binary_shell_bin_start, (size_t) _binary_shell_bin_size);  // 创建新进程，加载 shell 程序
+    yield();         // 进程切换，调度新创建的 shell 进程
 
     PANIC("switched to idle process");
 }
 
-__attribute__((section(".text.boot")))
-__attribute__((naked))
+__attribute__((section(".text.boot"))) // 将入口函数boot放在.text.boot中，放在启动时的位置。
+__attribute__((naked)) // 不生成函数入口代码和函数出口代码。boot函数需要手动控制函数进入和退出
 void boot(void) {
     __asm__ __volatile__(
-        "mv sp, %[stack_top]\n"
-        "j kernel_main\n"
+        "mv sp, %[stack_top]\n" // 内联汇编，将栈顶设置为kernel.ld中的栈顶位置
+        "j kernel_main\n"   // 跳转到kernel_main函数
         :
-        : [stack_top] "r" (__stack_top)
+        : [stack_top] "r" (__stack_top) // __stack_top 是kernel.ld中分配好的位置。
     );
 }

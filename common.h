@@ -12,13 +12,13 @@ typedef uint32_t vaddr_t;
 #define true  1
 #define false 0
 #define NULL  ((void *) 0)
-#define align_up(value, align)   __builtin_align_up(value, align)
-#define is_aligned(value, align) __builtin_is_aligned(value, align)
-#define offsetof(type, member)   __builtin_offsetof(type, member)
-#define va_list  __builtin_va_list
-#define va_start __builtin_va_start
-#define va_end   __builtin_va_end
-#define va_arg   __builtin_va_arg
+#define align_up(value, align)   __builtin_align_up(value, align) // 内存对齐，对齐为align的倍数
+#define is_aligned(value, align) __builtin_is_aligned(value, align) // 判断是否内存对齐
+#define offsetof(type, member)   __builtin_offsetof(type, member)  // 计算结构体成员member到struct开头的偏移量
+#define va_list  __builtin_va_list   // 用来存放不定数量参数的列表
+#define va_start __builtin_va_start  // 用于初始化参数列表
+#define va_end   __builtin_va_end    // 清理参数列表
+#define va_arg   __builtin_va_arg   // 返回下一个参数
 #define PAGE_SIZE 4096
 #define SYS_PUTCHAR 1
 #define SYS_GETCHAR 2

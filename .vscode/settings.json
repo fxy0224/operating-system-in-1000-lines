@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "user.h": "c",
+        "common.h": "c",
+        "atomic": "c"
+    }
+}

@@ -36,11 +36,11 @@ int strcmp(const char *s1, const char *s2) {
 
 void putchar(char ch);
 
-void printf(const char *fmt, ...) {
-    va_list vargs;
-    va_start(vargs, fmt);
+void printf(const char *fmt, ...) { // 可变参数列表
+    va_list vargs;   // 存放可变参数列表
+    va_start(vargs, fmt); // 初始化va_list, 得到参数列表
     while (*fmt) {
-        if (*fmt == '%') {
+        if (*fmt == '%') {  // 处理格式化字符串
             fmt++;
             switch (*fmt) {
                 case '\0':
@@ -50,7 +50,7 @@ void printf(const char *fmt, ...) {
                     putchar('%');
                     break;
                 case 's': {
-                    const char *s = va_arg(vargs, const char *);
+                    const char *s = va_arg(vargs, const char *); // 获取参数列表中的下一个参数
                     while (*s) {
                         putchar(*s);
                         s++;
@@ -85,12 +85,12 @@ void printf(const char *fmt, ...) {
                 }
             }
         } else {
-            putchar(*fmt);
+            putchar(*fmt); // 处理普通字符
         }
 
         fmt++;
     }
 
 end:
-    va_end(vargs);
+    va_end(vargs);  // 清理可变参数列表
 }
